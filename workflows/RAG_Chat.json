@@ -1,0 +1,472 @@
+{
+  "name": "Insurance Customer Service-GIG",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "documentsinsurance_gig",
+          "mode": "list",
+          "cachedResultName": "documentsinsurance_gig"
+        },
+        "embeddingBatchSize": 50,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        1664,
+        -176
+      ],
+      "id": "b1c52c0a-4d2e-4114-ae76-5718adbda2a7",
+      "name": "Supabase Vector Store",
+      "credentials": {
+        "supabaseApi": {
+          "id": "bQMqD3zM78NA1YFW",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "textSplittingMode": "custom",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1792,
+        48
+      ],
+      "id": "89f82428-654a-426c-a4b6-ce143d185013",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "chunkOverlap": 200,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        1984,
+        224
+      ],
+      "id": "45662054-4a84-40c5-b33e-88fe637ea6f2",
+      "name": "Recursive Character Text Splitter"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are a helpful assistant.\n\nYou MUST use the Hybrid_search_tool tool to find the answer. Do not use your own knowledge.\n\nIf you are not sure what to say, then simply output \"Sorry, I don't know\"\n\nIf you received this error \"OpenAI: Rate limit reached\" or \"Error: Unknown error\" reply that tray again after 1 minute, as this is a limited demo request reached"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        272,
+        272
+      ],
+      "id": "804e736b-6fe5-47bd-ba71-3081a1381e68",
+      "name": "AI Agent",
+      "alwaysOutputData": true,
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "formTitle": "Archivo",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "File",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "appendAttribution": true
+        }
+      },
+      "id": "cbb64fc5-d631-47d9-8904-2b8ce05158ac",
+      "name": "On form submission",
+      "type": "n8n-nodes-base.formTrigger",
+      "position": [
+        0,
+        -176
+      ],
+      "webhookId": "30cd20c9-4e70-4ec7-8f94-98158e425787",
+      "typeVersion": 2.2,
+      "alwaysOutputData": true,
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 20
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        288,
+        512
+      ],
+      "id": "ee210727-49e6-4f69-9212-4c2897293a75",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5-nano",
+          "mode": "list",
+          "cachedResultName": "gpt-5-nano"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        112,
+        480
+      ],
+      "id": "69da776e-e5ef-420e-a5b7-15fc97056a96",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "ybKWjgaznJsUQAHd",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1616,
+        48
+      ],
+      "id": "5b29bc9e-3a6c-4211-8b2a-210da1e11f79",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "ybKWjgaznJsUQAHd",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ohbglkhpupqvctupgmjw.supabase.co/functions/v1/hybrid_search_gig",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oYmdsa2hwdXBxdmN0dXBnbWp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4NDg1MzIsImV4cCI6MjA3MzQyNDUzMn0.WUYqkBTBNZuquDrKEgrJRrbiLZQl0KMP8d_aK9rcQq0"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', ``, 'string') }}"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.2,
+      "position": [
+        496,
+        496
+      ],
+      "id": "4ba8cbda-f49c-4188-8233-b8aef5b8e60f",
+      "name": "Hybrid_search_tool"
+    },
+    {
+      "parameters": {
+        "public": true,
+        "initialMessages": "مرحبا  👋\nانا نهال. قولي ازاي اقدر اساعدك",
+        "options": {
+          "allowFileUploads": true,
+          "allowedFilesMimeTypes": "image/jpeg,image/png,application/pdf",
+          "inputPlaceholder": "اكتب سؤالك",
+          "subtitle": "ابدأ محادثة. نحن هنا لمساعدتك على مدار الساعة.",
+          "title": "مساعدك الذكي لخدمة العملاء - التسويق",
+          "customCss": ":root {\n  /* Colors */\n  --chat--color-primary: #e74266;\n  --chat--color-primary-shade-50: #db4061;\n  --chat--color-primary-shade-100: #cf3c5c;\n  --chat--color-secondary: #20b69e;\n  --chat--color-secondary-shade-50: #1ca08a;\n  --chat--color-white: #ffffff;\n  --chat--color-light: #f2f4f8;\n  --chat--color-light-shade-50: #e6e9f1;\n  --chat--color-light-shade-100: #c2c5cc;\n  --chat--color-medium: #d2d4d9;\n  --chat--color-dark: #101330;\n  --chat--color-disabled: #777980;\n  --chat--color-typing: #404040;\n\n  /* Base Layout */\n  --chat--spacing: 1rem;\n  --chat--border-radius: 0.25rem;\n  --chat--transition-duration: 0.15s;\n  --chat--font-family: (\n    -apple-system,\n    BlinkMacSystemFont,\n    'Segoe UI',\n    Roboto,\n    Oxygen-Sans,\n    Ubuntu,\n    Cantarell,\n    'Helvetica Neue',\n    sans-serif\n  );\n\n  /* Window Dimensions */\n  --chat--window--width: 400px;\n  --chat--window--height: 600px;\n  --chat--window--bottom: var(--chat--spacing);\n  --chat--window--right: var(--chat--spacing);\n  --chat--window--z-index: 9999;\n  --chat--window--border: 1px solid var(--chat--color-light-shade-50);\n  --chat--window--border-radius: var(--chat--border-radius);\n  --chat--window--margin-bottom: var(--chat--spacing);\n\n  /* Header Styles */\n  --chat--header-height: auto;\n  --chat--header--padding: var(--chat--spacing);\n  --chat--header--background: var(--chat--color-dark);\n  --chat--header--color: var(--chat--color-light);\n  --chat--header--border-top: none;\n  --chat--header--border-bottom: none;\n  --chat--header--border-left: none;\n  --chat--header--border-right: none;\n  --chat--heading--font-size: 2em;\n  --chat--subtitle--font-size: inherit;\n  --chat--subtitle--line-height: 1.1;\n\n  /* Message Styles */\n  --chat--message--font-size: 1rem;\n  --chat--message--padding: var(--chat--spacing);\n  --chat--message--border-radius: var(--chat--border-radius);\n  --chat--message-line-height: 1.5;\n  --chat--message--margin-bottom: calc(var(--chat--spacing) * 1);\n  --chat--message--bot--background: var(--chat--color-white);\n  --chat--message--bot--color: var(--chat--color-dark);\n  --chat--message--bot--border: none;\n  --chat--message--user--background: var(--chat--color-secondary);\n  --chat--message--user--color: var(--chat--color-white);\n  --chat--message--user--border: none;\n  --chat--message--pre--background: rgba(0, 0, 0, 0.05);\n  --chat--messages-list--padding: var(--chat--spacing);\n\n  /* Toggle Button */\n  --chat--toggle--size: 64px;\n  --chat--toggle--width: var(--chat--toggle--size);\n  --chat--toggle--height: var(--chat--toggle--size);\n  --chat--toggle--border-radius: 50%;\n  --chat--toggle--background: var(--chat--color-primary);\n  --chat--toggle--hover--background: var(--chat--color-primary-shade-50);\n  --chat--toggle--active--background: var(--chat--color-primary-shade-100);\n  --chat--toggle--color: var(--chat--color-white);\n\n  /* Input Area */\n  --chat--textarea--height: 50px;\n  --chat--textarea--max-height: 30rem;\n  --chat--input--font-size: inherit;\n  --chat--input--border: 0;\n  --chat--input--border-radius: 0;\n  --chat--input--padding: 0.8rem;\n  --chat--input--background: var(--chat--color-white);\n  --chat--input--text-color: initial;\n  --chat--input--line-height: 1.5;\n  --chat--input--placeholder--font-size: var(--chat--input--font-size);\n  --chat--input--border-active: 0;\n  --chat--input--left--panel--width: 2rem;\n\n  /* Button Styles */\n  --chat--button--color: var(--chat--color-light);\n  --chat--button--background: var(--chat--color-primary);\n  --chat--button--padding: calc(var(--chat--spacing) * 1 / 2) var(--chat--spacing);\n  --chat--button--border-radius: var(--chat--border-radius);\n  --chat--button--hover--color: var(--chat--color-light);\n  --chat--button--hover--background: var(--chat--color-primary-shade-50);\n  --chat--close--button--color-hover: var(--chat--color-primary);\n\n  /* Send and File Buttons */\n  --chat--input--send--button--background: var(--chat--color-white);\n  --chat--input--send--button--color: var(--chat--color-light);\n  --chat--input--send--button--background-hover: var(--chat--color-primary-shade-50);\n  --chat--input--send--button--color-hover: var(--chat--color-secondary-shade-50);\n  --chat--input--file--button--background: var(--chat--color-white);\n  --chat--input--file--button--color: var(--chat--color-secondary);\n  --chat--input--file--button--background-hover: var(--chat--input--file--button--background);\n  --chat--input--file--button--color-hover: var(--chat--color-secondary-shade-50);\n  --chat--files-spacing: 0.25rem;\n\n  /* Body and Footer */\n  --chat--body--background: var(--chat--color-light);\n  --chat--footer--background: var(--chat--color-light);\n  --chat--footer--color: var(--chat--color-dark);\n}\n\n\n/* You can override any class styles, too. Right-click inspect in Chat UI to find class to override. */\n.chat-message {\n  max-width: 90% !important;\n}\n/* Messages */\n.n8n-chat .chat-messages,\n.n8n-chat .chat-message {\n  padding-right: 1rem;\n  padding-left: 0.5rem;\n  box-sizing: border-box;\n}\n/* Make sure input area spans full width */\n.n8n-chat .chat-input,\n.n8n-chat textarea {\n  width: 90% !important;\n  padding-right: 1rem; /* Add breathing space inside the text box */\n  padding-left: 0.5rem;\n  box-sizing: border-box;\n}\n/* Add new overrides here */\n.n8n-chat {\n  direction: rtl;\n  text-align: right;\n  padding-right: 1rem; /* Add space on the right side */\n  padding-left: 0.5rem; /* Optional: small space on left for symmetry */\n  box-sizing: border-box;\n}\n.n8n-chat .chat-message {\n  text-align: right;\n}\n.n8n-chat .chat-message.user {\n  margin-left: 0;\n  margin-right: auto;\n}\n.n8n-chat .chat-header {\n  padding: 0.5rem 0.75rem;   /* give a bit more space */\n  min-height: 48px;          /* allow for at least 2 lines */\n  font-size: 1rem;\n  background: var(--chat--color-dark);\n  color: var(--chat--color-light);\n  border-bottom: 1px solid var(--chat--color-light-shade-50);\n  display: flex;\n  align-items: center;\n  justify-content: flex-start;\n  flex-wrap: wrap;           /* allow wrapping */\n  text-align: right;         /* RTL alignment */\n}\n\n.n8n-chat .chat-header-title {\n  font-size: 1rem;\n  line-height: 1.3;          /* normal line spacing for wrapping */\n  flex: 1 1 100%;            /* title can take full width if needed */\n  white-space: normal;       /* allow text to wrap */\n  word-break: break-word;    /* break long words */\n}\n\n/* Optional: hide subtitle if you don’t need it */\n.n8n-chat .chat-header-subtitle {\n  display: none;\n}\n",
+          "responseMode": "streaming"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -80,
+        240
+      ],
+      "id": "7f38255d-47dc-4b4c-8c63-3b1f0c394670",
+      "name": "When chat message received",
+      "webhookId": "93ddc0e4-a977-45f0-bc05-9a205cd18153"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralCloudApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "File"
+            },
+            {
+              "name": "purpose",
+              "value": "ocr"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        640,
+        -176
+      ],
+      "id": "482e7fdc-6160-4486-9e39-ca62385ca3c1",
+      "name": "Upload File",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "Y2mJOld0lCiU00MJ",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://api.mistral.ai/v1/files/{{ $json.id }}/url",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "expiry",
+              "value": "24"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        848,
+        -176
+      ],
+      "id": "8b79b834-6569-4254-a1b4-4caab9375da6",
+      "name": "HTTP Request",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "Y2mJOld0lCiU00MJ",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.mistral.ai/v1/ocr",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralCloudApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-ocr-latest\",\n  \"document\": {\n    \"type\": \"document_url\",\n    \"document_url\": \"{{ $json.url }}\"\n  },\n  \"include_image_base64\": true\n} ",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1056,
+        -176
+      ],
+      "id": "a2796e39-70ea-4343-b26c-4b238d86a17c",
+      "name": "HTTP Request1",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "Y2mJOld0lCiU00MJ",
+          "name": "Mistral Cloud account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Upload File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hybrid_search_tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload File": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "cf39b05f-c55e-46e0-a9c2-989cb5186f1d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ed4c7a99e06c404345d0188cd4d52f505205cfc96cbca7641da7a15454e4d13d"
+  },
+  "id": "7dY3o6dFRfG68r3x",
+  "tags": []
+}
