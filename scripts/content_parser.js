@@ -23,8 +23,13 @@ class ContentParser {
       codeBlock: /```[\s\S]*?```/g,
 
       // Math equations (optional)
-      mathEquation: /\$\$[\s\S]*?\$\$/g
+      mathEquation: /\$\$[\s\S]*?\$\$/g,
+
+      // Heading pattern for document structure
+      heading: /^(#{1,6})\s+(.+)$/gm
     };
+    this.documentStructure = [];
+    this.currentSection = null;
   }
 
   /**
@@ -51,20 +56,36 @@ class ContentParser {
     const tables = [];
     const figures = [];
 
+    // Build document structure first
+    const sections = this.buildDocumentStructure(mistralResponse);
+
     // Extract tables (markdown format)
     let tableMatch;
     while ((tableMatch = this.patterns.markdownTable.exec(mistralResponse)) !== null) {
       const headers = this.extractTableHeaders(tableMatch[0]);
       const rowCount = this.countTableRows(tableMatch[0]);
+      const elementIndex = tableMatch.index;
+
+      // Extract title and context
+      const titleInfo = this.extractTitleForElement(mistralResponse, elementIndex);
+      const sectionId = this.findSectionForElement(elementIndex, sections);
+      const parentSection = sections.find(s => s.id === sectionId)?.parent_id || null;
 
       tables.push({
         content: tableMatch[0],
         type: 'markdown',
-        index: tableMatch.index,
+        index: elementIndex,
+        title: titleInfo.title,
+        context: titleInfo.context,
         metadata: {
           headers: headers,
           rows: rowCount,
           columns: headers.length
+        },
+        relations: {
+          section_id: sectionId,
+          parent_section: parentSection,
+          references: []
         }
       });
     }
@@ -74,15 +95,28 @@ class ContentParser {
     while ((htmlTableMatch = this.patterns.htmlTable.exec(mistralResponse)) !== null) {
       const headers = this.extractHTMLTableHeaders(htmlTableMatch[0]);
       const rowCount = this.countHTMLTableRows(htmlTableMatch[0]);
+      const elementIndex = htmlTableMatch.index;
+
+      // Extract title and context
+      const titleInfo = this.extractTitleForElement(mistralResponse, elementIndex);
+      const sectionId = this.findSectionForElement(elementIndex, sections);
+      const parentSection = sections.find(s => s.id === sectionId)?.parent_id || null;
 
       tables.push({
         content: htmlTableMatch[0],
         type: 'html',
-        index: htmlTableMatch.index,
+        index: elementIndex,
+        title: titleInfo.title,
+        context: titleInfo.context,
         metadata: {
           headers: headers,
           rows: rowCount,
           columns: headers.length
+        },
+        relations: {
+          section_id: sectionId,
+          parent_section: parentSection,
+          references: []
         }
       });
     }
@@ -90,14 +124,26 @@ class ContentParser {
     // Extract figures (markdown images)
     let imageMatch;
     while ((imageMatch = this.patterns.markdownImage.exec(mistralResponse)) !== null) {
+      const elementIndex = imageMatch.index;
+      const titleInfo = this.extractTitleForElement(mistralResponse, elementIndex);
+      const sectionId = this.findSectionForElement(elementIndex, sections);
+      const parentSection = sections.find(s => s.id === sectionId)?.parent_id || null;
+
       figures.push({
         alt_text: imageMatch[1] || 'Untitled figure',
         url: imageMatch[2],
         type: 'markdown',
-        index: imageMatch.index,
+        index: elementIndex,
+        title: titleInfo.title,
+        context: titleInfo.context,
         metadata: {
           format: this.extractImageFormat(imageMatch[2]),
           has_alt: Boolean(imageMatch[1])
+        },
+        relations: {
+          section_id: sectionId,
+          parent_section: parentSection,
+          references: []
         }
       });
     }
@@ -105,13 +151,25 @@ class ContentParser {
     // Extract figures (HTML images)
     let htmlImageMatch;
     while ((htmlImageMatch = this.patterns.htmlImage.exec(mistralResponse)) !== null) {
+      const elementIndex = htmlImageMatch.index;
+      const titleInfo = this.extractTitleForElement(mistralResponse, elementIndex);
+      const sectionId = this.findSectionForElement(elementIndex, sections);
+      const parentSection = sections.find(s => s.id === sectionId)?.parent_id || null;
+
       figures.push({
         url: htmlImageMatch[1],
         type: 'html',
-        index: htmlImageMatch.index,
+        index: elementIndex,
+        title: titleInfo.title,
+        context: titleInfo.context,
         metadata: {
           format: this.extractImageFormat(htmlImageMatch[1]),
           has_alt: false
+        },
+        relations: {
+          section_id: sectionId,
+          parent_section: parentSection,
+          references: []
         }
       });
     }
@@ -126,6 +184,11 @@ class ContentParser {
       .filter(p => p.length > 0);
 
     paragraphs.forEach((paragraph, idx) => {
+      // Find which section this paragraph belongs to
+      const paraPosition = mistralResponse.indexOf(paragraph);
+      const sectionId = paraPosition !== -1 ? this.findSectionForElement(paraPosition, sections) : null;
+      const parentSection = sectionId ? (sections.find(s => s.id === sectionId)?.parent_id || null) : null;
+
       textChunks.push({
         content: paragraph,
         chunk_index: idx,
@@ -133,6 +196,10 @@ class ContentParser {
         metadata: {
           word_count: paragraph.split(/\s+/).length,
           char_count: paragraph.length
+        },
+        relations: {
+          section_id: sectionId,
+          parent_section: parentSection
         }
       });
     });
@@ -148,14 +215,35 @@ class ContentParser {
       figure_index: idx
     }));
 
+    // Build relationships between elements
+    const allElements = [...indexedTables, ...indexedFigures, ...textChunks];
+    for (const table of indexedTables) {
+      table.relations.references = this.findRelatedElements(
+        table.content + ' ' + (table.context || ''),
+        allElements,
+        'table'
+      );
+    }
+
+    for (const figure of indexedFigures) {
+      const contextText = (figure.context || '') + ' ' + (figure.alt_text || '');
+      figure.relations.references = this.findRelatedElements(
+        contextText,
+        allElements,
+        'figure'
+      );
+    }
+
     return {
       text: textChunks,
       tables: indexedTables,
       figures: indexedFigures,
+      sections: sections,
       metadata: {
         total_text_chunks: textChunks.length,
         total_tables: tables.length,
         total_figures: figures.length,
+        total_sections: sections.length,
         timestamp: new Date().toISOString()
       }
     };
@@ -290,6 +378,143 @@ class ContentParser {
     if (text.match(/^```/)) return 'code_block';
     if (text.match(/^\$\$/)) return 'math_equation';
     return 'paragraph';
+  }
+
+  /**
+   * Extract title and context for a table or figure
+   * @param {string} text - The full document text
+   * @param {number} elementIndex - Position of the element
+   * @param {number} contextLines - Number of lines to look back
+   * @returns {Object} Title and context information
+   */
+  extractTitleForElement(text, elementIndex, contextLines = 3) {
+    const textBefore = text.substring(0, elementIndex).trim();
+    const linesBefore = textBefore.split('\n');
+
+    let title = null;
+    let contextText = '';
+
+    // Look for the last heading before this element
+    for (let i = linesBefore.length - 1; i >= Math.max(0, linesBefore.length - 10); i--) {
+      const line = linesBefore[i].trim();
+      const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headingMatch) {
+        title = headingMatch[2].trim();
+        break;
+      }
+    }
+
+    // Get context (last few lines before element)
+    const contextLinesList = linesBefore.slice(-contextLines);
+    contextText = contextLinesList.join('\n').trim();
+
+    // If no heading found, use last sentence from context
+    if (!title && contextText) {
+      const sentences = contextText.split(/[.!?]+/);
+      if (sentences.length > 0) {
+        title = sentences[sentences.length - 1].trim().substring(0, 100);
+      }
+    }
+
+    return {
+      title: title || 'Untitled',
+      context: contextText.substring(0, 500)
+    };
+  }
+
+  /**
+   * Build hierarchical document structure from headings
+   * @param {string} text - The full document text
+   * @returns {Array} List of section objects with hierarchy
+   */
+  buildDocumentStructure(text) {
+    const sections = [];
+    const parentStack = [];
+    const headingRegex = /^(#{1,6})\s+(.+)$/gm;
+    let match;
+
+    while ((match = headingRegex.exec(text)) !== null) {
+      const level = match[1].length;
+      const headingText = match[2].trim();
+      const position = match.index;
+
+      const section = {
+        id: `section_${sections.length}`,
+        level: level,
+        title: headingText,
+        position: position,
+        parent_id: null,
+        children: []
+      };
+
+      // Update parent stack
+      while (parentStack.length > 0 && parentStack[parentStack.length - 1].level >= level) {
+        parentStack.pop();
+      }
+
+      // Set parent relationship
+      if (parentStack.length > 0) {
+        const parent = parentStack[parentStack.length - 1];
+        section.parent_id = parent.id;
+        parent.children.push(section.id);
+      }
+
+      parentStack.push(section);
+      sections.push(section);
+    }
+
+    return sections;
+  }
+
+  /**
+   * Find which section an element belongs to
+   * @param {number} elementIndex - Position of element
+   * @param {Array} sections - List of document sections
+   * @returns {string|null} Section ID or null
+   */
+  findSectionForElement(elementIndex, sections) {
+    let currentSection = null;
+    for (const section of sections) {
+      if (section.position <= elementIndex) {
+        currentSection = section.id;
+      } else {
+        break;
+      }
+    }
+    return currentSection;
+  }
+
+  /**
+   * Find related elements by looking for references
+   * @param {string} elementContent - Content to search for references
+   * @param {Array} allElements - All elements to search
+   * @param {string} elementType - Type of current element
+   * @returns {Array} List of related element IDs
+   */
+  findRelatedElements(elementContent, allElements, elementType) {
+    const related = [];
+    const referencePatterns = {
+      table: /\b(?:table|tbl\.?)\s*(\d+)/gi,
+      figure: /\b(?:figure|fig\.?|image)\s*(\d+)/gi
+    };
+
+    for (const [patternType, pattern] of Object.entries(referencePatterns)) {
+      let match;
+      while ((match = pattern.exec(elementContent.toLowerCase())) !== null) {
+        const refNumber = match[1];
+        // Find element with matching index
+        for (const elem of allElements) {
+          if (elem.type === patternType) {
+            const elemIdx = elem[`${patternType}_index`];
+            if (elemIdx !== undefined && String(elemIdx + 1) === refNumber) {
+              related.push(`${patternType}_${elemIdx}`);
+            }
+          }
+        }
+      }
+    }
+
+    return related;
   }
 }
 

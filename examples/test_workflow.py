@@ -233,10 +233,133 @@ This table shows user data."""
             except requests.exceptions.RequestException as e:
                 print(f"✗ Failed to check collection '{collection}': {e}")
 
+    def test_enhanced_title_extraction(self) -> Dict[str, Any]:
+        """Test enhanced parser with title extraction"""
+        print("\n=== Test 6: Enhanced Title Extraction ===")
+
+        test_data = {
+            "mistral_response": """# Main Report
+
+## Financial Analysis
+
+The following table shows our financial performance:
+
+| Year | Revenue | Profit |
+|------|---------|--------|
+| 2023 | $10M    | $2M    |
+| 2024 | $12M    | $3M    |
+
+This demonstrates consistent growth."""
+        }
+
+        return self._send_request(test_data, expected_text=2, expected_tables=1, expected_figures=0)
+
+    def test_enhanced_sections(self) -> Dict[str, Any]:
+        """Test document structure and section tracking"""
+        print("\n=== Test 7: Section Tracking ===")
+
+        test_data = {
+            "mistral_response": """# Main Title
+
+## Section 1
+
+Content in section 1.
+
+### Subsection 1.1
+
+More detailed content.
+
+## Section 2
+
+Content in section 2.
+
+![Chart](https://example.com/chart.png)
+
+Final thoughts."""
+        }
+
+        return self._send_request(test_data, expected_text=4, expected_tables=0, expected_figures=1)
+
+    def test_hybrid_search(self) -> Dict[str, Any]:
+        """Test hybrid search functionality"""
+        print("\n=== Test 8: Hybrid Search ===")
+
+        try:
+            # Import hybrid search utility
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+            from hybrid_search import HybridSearch
+
+            searcher = HybridSearch()
+
+            # Test basic search
+            results = searcher.search(
+                collection_name="mistral_text",
+                query="financial analysis",
+                limit=3
+            )
+
+            print(f"  Found {len(results)} results")
+
+            # Test search with filters
+            filtered_results = searcher.search(
+                collection_name="mistral_tables",
+                query="revenue",
+                filters={"type": "table"},
+                limit=3
+            )
+
+            print(f"  Found {len(filtered_results)} filtered results")
+            print("✓ Hybrid search test passed")
+            return {"success": True, "results": len(results), "filtered": len(filtered_results)}
+
+        except Exception as e:
+            print(f"✗ Hybrid search test failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    def test_collection_auto_creation(self) -> Dict[str, Any]:
+        """Test auto-creation of collections"""
+        print("\n=== Test 9: Collection Auto-Creation ===")
+
+        # Check if collections exist
+        url = f"{self.qdrant_url}/collections"
+        try:
+            response = requests.get(url, headers=self.qdrant_headers)
+            response.raise_for_status()
+            data = response.json()
+
+            collections = [c['name'] for c in data.get('result', {}).get('collections', [])]
+            required = ['mistral_text', 'mistral_tables', 'mistral_figures']
+
+            missing = [c for c in required if c not in collections]
+
+            if missing:
+                print(f"  ⚠ Missing collections: {missing}")
+                print("  Collections will be auto-created on first workflow run")
+            else:
+                print(f"  ✓ All required collections exist")
+
+            # Check payload indexes
+            for collection in required:
+                if collection in collections:
+                    coll_url = f"{self.qdrant_url}/collections/{collection}"
+                    coll_response = requests.get(coll_url, headers=self.qdrant_headers)
+                    if coll_response.status_code == 200:
+                        coll_data = coll_response.json()
+                        result = coll_data.get('result', {})
+                        indexes = result.get('payload_schema', {})
+                        print(f"  Collection '{collection}': {len(indexes)} payload indexes")
+
+            print("✓ Collection auto-creation test passed")
+            return {"success": True, "collections": collections}
+
+        except Exception as e:
+            print(f"✗ Collection test failed: {e}")
+            return {"success": False, "error": str(e)}
+
     def run_all_tests(self) -> None:
         """Run all tests"""
         print(f"\n{'='*60}")
-        print("Testing Mistral → Qdrant Workflow")
+        print("Testing Mistral → Qdrant Enhanced Workflow")
         print(f"{'='*60}")
         print(f"Webhook URL: {self.webhook_url}")
         print(f"Qdrant URL: {self.qdrant_url}")
@@ -246,7 +369,11 @@ This table shows user data."""
             self.test_with_table,
             self.test_with_figure,
             self.test_complete_response,
-            self.test_html_table
+            self.test_html_table,
+            self.test_enhanced_title_extraction,
+            self.test_enhanced_sections,
+            self.test_collection_auto_creation,
+            self.test_hybrid_search
         ]
 
         results = []

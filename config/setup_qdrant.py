@@ -46,7 +46,7 @@ class QdrantSetup:
 
     def create_collection(self, collection_name: str, description: str = "") -> bool:
         """
-        Create a Qdrant collection
+        Create a Qdrant collection with payload indexes for hybrid search
 
         Args:
             collection_name: Name of the collection
@@ -59,37 +59,91 @@ class QdrantSetup:
 
         # Check if collection exists
         check_url = f"{self.qdrant_url}/collections/{collection_name}"
+        collection_exists = False
         try:
             response = requests.get(check_url, headers=self.headers)
             if response.status_code == 200:
                 print(f"✓ Collection '{collection_name}' already exists")
-                return True
+                collection_exists = True
         except requests.exceptions.RequestException as e:
             print(f"Warning: Could not check collection existence: {e}")
 
-        # Create collection
-        create_url = f"{self.qdrant_url}/collections/{collection_name}"
-        payload = {
-            "vectors": {
-                "size": self.vector_size,
-                "distance": self.distance_metric
-            },
-            "optimizers_config": {
-                "indexing_threshold": 20000
-            },
-            "replication_factor": 1
-        }
+        # Create collection if it doesn't exist
+        if not collection_exists:
+            create_url = f"{self.qdrant_url}/collections/{collection_name}"
+            payload = {
+                "vectors": {
+                    "size": self.vector_size,
+                    "distance": self.distance_metric
+                },
+                "optimizers_config": {
+                    "indexing_threshold": 20000
+                },
+                "replication_factor": 1
+            }
 
-        try:
-            response = requests.put(create_url, json=payload, headers=self.headers)
-            response.raise_for_status()
-            print(f"✓ Collection '{collection_name}' created successfully")
-            return True
-        except requests.exceptions.RequestException as e:
-            print(f"✗ Failed to create collection '{collection_name}': {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                print(f"Response: {e.response.text}")
-            return False
+            try:
+                response = requests.put(create_url, json=payload, headers=self.headers)
+                response.raise_for_status()
+                print(f"✓ Collection '{collection_name}' created successfully")
+            except requests.exceptions.RequestException as e:
+                print(f"✗ Failed to create collection '{collection_name}': {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"Response: {e.response.text}")
+                return False
+
+        # Create payload indexes for hybrid search
+        return self._create_payload_indexes(collection_name)
+
+    def _create_payload_indexes(self, collection_name: str) -> bool:
+        """
+        Create payload indexes for efficient filtering and hybrid search
+
+        Args:
+            collection_name: Name of the collection
+
+        Returns:
+            True if successful
+        """
+        print(f"  Creating payload indexes for '{collection_name}'...")
+
+        indexes = [
+            {"field_name": "title", "field_schema": "keyword"},
+            {"field_name": "type", "field_schema": "keyword"},
+            {"field_name": "source", "field_schema": "keyword"},
+            {"field_name": "relations.section_id", "field_schema": "keyword"},
+            {"field_name": "relations.parent_section", "field_schema": "keyword"},
+            {"field_name": "timestamp", "field_schema": "datetime"}
+        ]
+
+        # Add collection-specific indexes
+        if 'table' in collection_name:
+            indexes.extend([
+                {"field_name": "metadata.rows", "field_schema": "integer"},
+                {"field_name": "metadata.columns", "field_schema": "integer"}
+            ])
+        elif 'figure' in collection_name:
+            indexes.append(
+                {"field_name": "metadata.format", "field_schema": "keyword"}
+            )
+
+        success = True
+        for index in indexes:
+            index_url = f"{self.qdrant_url}/collections/{collection_name}/index"
+            try:
+                response = requests.put(index_url, json=index, headers=self.headers)
+                # Index creation returns 200 or 202 if successful
+                if response.status_code in [200, 202]:
+                    print(f"    ✓ Created index on '{index['field_name']}'")
+                else:
+                    # Index might already exist, which is fine
+                    print(f"    ⚠ Index on '{index['field_name']}' may already exist")
+            except requests.exceptions.RequestException as e:
+                print(f"    ⚠ Could not create index on '{index['field_name']}': {e}")
+                # Don't fail the whole process for index creation issues
+                # Indexes are optional for functionality
+
+        return success
 
     def setup_all_collections(self) -> bool:
         """

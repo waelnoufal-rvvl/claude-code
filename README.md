@@ -1,6 +1,17 @@
 # Mistral Output Separation with n8n and Qdrant
 
-This project provides a complete workflow for processing Mistral AI output, separating content into text, tables, and figures, and storing each type separately in Qdrant vector database.
+This project provides a complete workflow for processing Mistral AI output, separating content into text, tables, and figures, and storing each type separately in Qdrant vector database with **enhanced relationship tracking, auto-collection creation, and hybrid search capabilities**.
+
+## 🚀 What's New (Enhanced Version)
+
+- ✅ **Auto-Creation of Qdrant Collections**: Collections and payload indexes created automatically
+- ✅ **Title & Context Extraction**: Tables and figures stored with titles and surrounding context
+- ✅ **Document Structure Tracking**: Hierarchical section graph with parent-child relationships
+- ✅ **Relationship Mapping**: Cross-references between tables, figures, and text
+- ✅ **Hybrid Search**: Combine vector similarity with keyword filtering
+- ✅ **Payload Indexes**: Fast filtering on sections, types, and metadata
+
+See [FEATURES.md](FEATURES.md) for complete documentation.
 
 ## Overview
 
@@ -10,6 +21,14 @@ The workflow processes Mistral AI responses that may contain:
 - **Figures**: Images, charts, diagrams (as URLs or base64)
 
 Each content type is stored in separate Qdrant collections for optimized retrieval and semantic search.
+
+### Enhanced Data Structure
+
+Each element now includes:
+- **Title**: Extracted from nearest heading
+- **Context**: Surrounding text for better understanding
+- **Relations**: Document structure (section ID, parent section, references)
+- **Metadata**: Enhanced with structural information
 
 ## Architecture
 
@@ -44,7 +63,25 @@ Qdrant     Qdrant    Qdrant
 
 ## Quick Start
 
+**Choose Your Version:**
+- **Enhanced Workflow** (Recommended): `workflows/mistral-qdrant-enhanced.json` - Includes auto-creation, relations, and hybrid search
+- **Original Workflow**: `workflows/mistral-qdrant-separation.json` - Basic content separation
+
+### Option A: Enhanced Workflow (Auto-Setup)
+
+The enhanced workflow automatically creates collections with payload indexes on first run.
+
+1. **Import the enhanced workflow** into n8n: `workflows/mistral-qdrant-enhanced.json`
+2. **Configure environment variables** (see Configuration section)
+3. **Activate the workflow** - Collections are created automatically on first execution!
+
+That's it! Skip to Step 3 below.
+
+### Option B: Manual Setup (Original Workflow)
+
 ### Step 1: Set up Qdrant Collections
+
+**Note**: The enhanced workflow does this automatically. Manual setup only needed for original workflow.
 
 Create three separate collections in Qdrant:
 
@@ -239,6 +276,51 @@ results = client.search(
     collection_name="mistral_tables",
     query_vector=embedding,
     limit=5
+)
+```
+
+### Example 3: Hybrid Search (Enhanced Workflow)
+
+Combine vector search with keyword filtering:
+
+```python
+from scripts.hybrid_search import HybridSearch
+
+searcher = HybridSearch()
+
+# Search with filters
+results = searcher.search(
+    collection_name="mistral_tables",
+    query="revenue analysis",
+    filters={
+        "type": "table",
+        "relations.section_id": "section_1"
+    },
+    limit=5
+)
+
+# Multi-collection search
+all_results = searcher.multi_collection_search(
+    query="financial performance",
+    limit_per_collection=3
+)
+```
+
+### Example 4: Find Related Content
+
+```python
+# Find content related to a specific table
+related = searcher.find_related_content(
+    element_type="table",
+    element_index=0,
+    limit=5
+)
+
+# Search within a specific document section
+section_results = searcher.search_by_section(
+    query="growth metrics",
+    section_id="section_2",
+    limit=10
 )
 ```
 

@@ -1,0 +1,286 @@
+{
+  "name": "Mistral Output → Qdrant (Enhanced with Auto-Creation)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mistral-process-enhanced",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "mistral-qdrant-webhook-enhanced"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Auto-create Qdrant collections with payload indexes\nconst qdrantUrl = $env.QDRANT_URL || 'http://localhost:6333';\nconst apiKey = $env.QDRANT_API_KEY;\n\nconst headers = { 'Content-Type': 'application/json' };\nif (apiKey) {\n  headers['api-key'] = apiKey;\n}\n\nconst collections = ['mistral_text', 'mistral_tables', 'mistral_figures'];\nconst results = [];\n\nfor (const collectionName of collections) {\n  // Check if collection exists\n  let exists = false;\n  try {\n    const checkResponse = await $http.get(`${qdrantUrl}/collections/${collectionName}`, { headers });\n    exists = checkResponse.status === 200;\n    results.push({ collection: collectionName, status: 'exists', created: false });\n  } catch (error) {\n    // Collection doesn't exist, create it\n    const createPayload = {\n      vectors: { size: 1024, distance: 'Cosine' },\n      optimizers_config: { indexing_threshold: 20000 },\n      replication_factor: 1\n    };\n    \n    try {\n      await $http.put(`${qdrantUrl}/collections/${collectionName}`, {\n        headers,\n        body: createPayload\n      });\n      \n      // Create payload indexes\n      const indexes = [\n        { field_name: 'title', field_schema: 'keyword' },\n        { field_name: 'type', field_schema: 'keyword' },\n        { field_name: 'source', field_schema: 'keyword' },\n        { field_name: 'relations.section_id', field_schema: 'keyword' },\n        { field_name: 'relations.parent_section', field_schema: 'keyword' },\n        { field_name: 'timestamp', field_schema: 'datetime' }\n      ];\n      \n      if (collectionName.includes('table')) {\n        indexes.push({ field_name: 'metadata.rows', field_schema: 'integer' });\n        indexes.push({ field_name: 'metadata.columns', field_schema: 'integer' });\n      } else if (collectionName.includes('figure')) {\n        indexes.push({ field_name: 'metadata.format', field_schema: 'keyword' });\n      }\n      \n      for (const index of indexes) {\n        try {\n          await $http.put(`${qdrantUrl}/collections/${collectionName}/index`, {\n            headers,\n            body: index\n          });\n        } catch (indexError) {\n          // Index creation is optional, don't fail\n        }\n      }\n      \n      results.push({ collection: collectionName, status: 'created', created: true });\n    } catch (createError) {\n      results.push({ collection: collectionName, status: 'error', error: createError.message });\n    }\n  }\n}\n\nreturn { collections_status: results, ready: true };"
+      },
+      "id": "init-collections",
+      "name": "Initialize Collections",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Enhanced Content Parser with titles, context, and relations\nconst mistralResponse = $input.item.json.mistral_response || $input.item.json.body?.mistral_response || '';\n\nclass ContentParser {\n  constructor() {\n    this.patterns = {\n      markdownTable: /\\|(.+)\\|[\\r\\n]+\\|[-:\\s|]+\\|[\\r\\n]+((?:\\|.+\\|[\\r\\n]+)+)/g,\n      htmlTable: /<table[\\s\\S]*?<\\/table>/gi,\n      markdownImage: /!\\[([^\\]]*)\\]\\(([^)]+)\\)/g,\n      htmlImage: /<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>/gi,\n      heading: /^(#{1,6})\\s+(.+)$/gm\n    };\n  }\n\n  buildDocumentStructure(text) {\n    const sections = [];\n    const parentStack = [];\n    let match;\n    const headingRegex = /^(#{1,6})\\s+(.+)$/gm;\n    \n    while ((match = headingRegex.exec(text)) !== null) {\n      const level = match[1].length;\n      const section = {\n        id: `section_${sections.length}`,\n        level: level,\n        title: match[2].trim(),\n        position: match.index,\n        parent_id: null,\n        children: []\n      };\n      \n      while (parentStack.length > 0 && parentStack[parentStack.length - 1].level >= level) {\n        parentStack.pop();\n      }\n      \n      if (parentStack.length > 0) {\n        const parent = parentStack[parentStack.length - 1];\n        section.parent_id = parent.id;\n        parent.children.push(section.id);\n      }\n      \n      parentStack.push(section);\n      sections.push(section);\n    }\n    \n    return sections;\n  }\n\n  extractTitleForElement(text, elementIndex) {\n    const textBefore = text.substring(0, elementIndex).trim();\n    const linesBefore = textBefore.split('\\n');\n    let title = null;\n    \n    for (let i = linesBefore.length - 1; i >= Math.max(0, linesBefore.length - 10); i--) {\n      const line = linesBefore[i].trim();\n      const headingMatch = line.match(/^(#{1,6})\\s+(.+)$/);\n      if (headingMatch) {\n        title = headingMatch[2].trim();\n        break;\n      }\n    }\n    \n    const contextLines = linesBefore.slice(-3);\n    const context = contextLines.join('\\n').trim().substring(0, 500);\n    \n    if (!title && context) {\n      const sentences = context.split(/[.!?]+/);\n      if (sentences.length > 0) {\n        title = sentences[sentences.length - 1].trim().substring(0, 100);\n      }\n    }\n    \n    return { title: title || 'Untitled', context };\n  }\n\n  findSectionForElement(elementIndex, sections) {\n    let currentSection = null;\n    for (const section of sections) {\n      if (section.position <= elementIndex) {\n        currentSection = section.id;\n      } else {\n        break;\n      }\n    }\n    return currentSection;\n  }\n\n  parse(text) {\n    const sections = this.buildDocumentStructure(text);\n    const tables = [];\n    const figures = [];\n    const textChunks = [];\n    \n    // Extract tables\n    let match;\n    while ((match = this.patterns.markdownTable.exec(text)) !== null) {\n      const titleInfo = this.extractTitleForElement(text, match.index);\n      const sectionId = this.findSectionForElement(match.index, sections);\n      const parentSection = sections.find(s => s.id === sectionId)?.parent_id || null;\n      \n      tables.push({\n        content: match[0],\n        type: 'markdown',\n        index: match.index,\n        title: titleInfo.title,\n        context: titleInfo.context,\n        relations: {\n          section_id: sectionId,\n          parent_section: parentSection,\n          references: []\n        }\n      });\n    }\n    \n    // Reset regex\n    this.patterns.htmlTable.lastIndex = 0;\n    while ((match = this.patterns.htmlTable.exec(text)) !== null) {\n      const titleInfo = this.extractTitleForElement(text, match.index);\n      const sectionId = this.findSectionForElement(match.index, sections);\n      const parentSection = sections.find(s => s.id === sectionId)?.parent_id || null;\n      \n      tables.push({\n        content: match[0],\n        type: 'html',\n        index: match.index,\n        title: titleInfo.title,\n        context: titleInfo.context,\n        relations: {\n          section_id: sectionId,\n          parent_section: parentSection,\n          references: []\n        }\n      });\n    }\n    \n    // Extract figures\n    this.patterns.markdownImage.lastIndex = 0;\n    while ((match = this.patterns.markdownImage.exec(text)) !== null) {\n      const titleInfo = this.extractTitleForElement(text, match.index);\n      const sectionId = this.findSectionForElement(match.index, sections);\n      const parentSection = sections.find(s => s.id === sectionId)?.parent_id || null;\n      \n      figures.push({\n        alt_text: match[1] || 'Untitled figure',\n        url: match[2],\n        type: 'markdown',\n        index: match.index,\n        title: titleInfo.title,\n        context: titleInfo.context,\n        relations: {\n          section_id: sectionId,\n          parent_section: parentSection,\n          references: []\n        }\n      });\n    }\n    \n    // Remove extracted content\n    let textOnly = text;\n    const removals = [\n      ...tables.map(t => ({ index: t.index, length: t.content.length })),\n      ...figures.map(f => ({ index: f.index, length: `![${f.alt_text}](${f.url})`.length }))\n    ].sort((a, b) => b.index - a.index);\n    \n    for (const removal of removals) {\n      textOnly = textOnly.substring(0, removal.index) + textOnly.substring(removal.index + removal.length);\n    }\n    \n    // Extract text chunks\n    const paragraphs = textOnly.split(/\\n\\n+/).map(p => p.trim()).filter(p => p.length > 0);\n    paragraphs.forEach((paragraph, idx) => {\n      const paraPosition = text.indexOf(paragraph);\n      const sectionId = paraPosition !== -1 ? this.findSectionForElement(paraPosition, sections) : null;\n      const parentSection = sectionId ? (sections.find(s => s.id === sectionId)?.parent_id || null) : null;\n      \n      textChunks.push({\n        content: paragraph,\n        chunk_index: idx,\n        type: 'text',\n        relations: {\n          section_id: sectionId,\n          parent_section: parentSection\n        }\n      });\n    });\n    \n    return {\n      text: textChunks,\n      tables: tables.map((t, idx) => ({ ...t, table_index: idx })),\n      figures: figures.map((f, idx) => ({ ...f, figure_index: idx })),\n      sections: sections,\n      metadata: {\n        total_text_chunks: textChunks.length,\n        total_tables: tables.length,\n        total_figures: figures.length,\n        total_sections: sections.length,\n        timestamp: new Date().toISOString()\n      }\n    };\n  }\n}\n\nconst parser = new ContentParser();\nreturn parser.parse(mistralResponse);"
+      },
+      "id": "content-parser",
+      "name": "Enhanced Content Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "text-items",
+              "name": "items",
+              "value": "={{ $json.text }}",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "id": "prepare-text",
+      "name": "Prepare Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "table-items",
+              "name": "items",
+              "value": "={{ $json.tables }}",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "id": "prepare-tables",
+      "name": "Prepare Tables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "figure-items",
+              "name": "items",
+              "value": "={{ $json.figures }}",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "id": "prepare-figures",
+      "name": "Prepare Figures",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items"
+      },
+      "id": "split-text",
+      "name": "Split Text",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items"
+      },
+      "id": "split-tables",
+      "name": "Split Tables",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items"
+      },
+      "id": "split-figures",
+      "name": "Split Figures",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [1050, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralApi",
+        "url": "https://api.mistral.ai/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-embed\",\n  \"input\": [\"{{ $json.content }}\"]\n}"
+      },
+      "id": "embed-text",
+      "name": "Embed Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralApi",
+        "url": "https://api.mistral.ai/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-embed\",\n  \"input\": [\"{{ $json.content + ' ' + $json.title }}\"]\n}"
+      },
+      "id": "embed-tables",
+      "name": "Embed Tables",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralApi",
+        "url": "https://api.mistral.ai/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-embed\",\n  \"input\": [\"{{ $json.alt_text + ' ' + $json.title }}\"]\n}"
+      },
+      "id": "embed-figures",
+      "name": "Embed Figures",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.QDRANT_URL }}/collections/mistral_text/points",
+        "method": "PUT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": \"text_{{ $runIndex }}_{{ $json.chunk_index }}\",\n    \"vector\": {{ $json.data[0].embedding }},\n    \"payload\": {\n      \"content\": \"{{ $('Split Text').item.json.content }}\",\n      \"type\": \"text\",\n      \"source\": \"mistral\",\n      \"timestamp\": \"{{ $now }}\",\n      \"relations\": {\n        \"section_id\": \"{{ $('Split Text').item.json.relations.section_id || '' }}\",\n        \"parent_section\": \"{{ $('Split Text').item.json.relations.parent_section || '' }}\"\n      },\n      \"metadata\": {\n        \"chunk_index\": {{ $('Split Text').item.json.chunk_index }}\n      }\n    }\n  }]\n}"
+      },
+      "id": "store-text",
+      "name": "Store Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.QDRANT_URL }}/collections/mistral_tables/points",
+        "method": "PUT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": \"table_{{ $runIndex }}_{{ $json.table_index }}\",\n    \"vector\": {{ $json.data[0].embedding }},\n    \"payload\": {\n      \"content\": \"{{ $('Split Tables').item.json.content }}\",\n      \"title\": \"{{ $('Split Tables').item.json.title }}\",\n      \"context\": \"{{ $('Split Tables').item.json.context }}\",\n      \"type\": \"table\",\n      \"source\": \"mistral\",\n      \"timestamp\": \"{{ $now }}\",\n      \"relations\": {\n        \"section_id\": \"{{ $('Split Tables').item.json.relations.section_id || '' }}\",\n        \"parent_section\": \"{{ $('Split Tables').item.json.relations.parent_section || '' }}\",\n        \"references\": {{ $('Split Tables').item.json.relations.references || [] }}\n      },\n      \"metadata\": {\n        \"table_index\": {{ $('Split Tables').item.json.table_index }},\n        \"table_type\": \"{{ $('Split Tables').item.json.type }}\"\n      }\n    }\n  }]\n}"
+      },
+      "id": "store-tables",
+      "name": "Store Tables",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.QDRANT_URL }}/collections/mistral_figures/points",
+        "method": "PUT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [{\n    \"id\": \"figure_{{ $runIndex }}_{{ $json.figure_index }}\",\n    \"vector\": {{ $json.data[0].embedding }},\n    \"payload\": {\n      \"content\": \"{{ $('Split Figures').item.json.alt_text }}\",\n      \"title\": \"{{ $('Split Figures').item.json.title }}\",\n      \"context\": \"{{ $('Split Figures').item.json.context }}\",\n      \"image_url\": \"{{ $('Split Figures').item.json.url }}\",\n      \"type\": \"figure\",\n      \"source\": \"mistral\",\n      \"timestamp\": \"{{ $now }}\",\n      \"relations\": {\n        \"section_id\": \"{{ $('Split Figures').item.json.relations.section_id || '' }}\",\n        \"parent_section\": \"{{ $('Split Figures').item.json.relations.parent_section || '' }}\",\n        \"references\": {{ $('Split Figures').item.json.relations.references || [] }}\n      },\n      \"metadata\": {\n        \"figure_index\": {{ $('Split Figures').item.json.figure_index }},\n        \"figure_type\": \"{{ $('Split Figures').item.json.type }}\"\n      }\n    }\n  }]\n}"
+      },
+      "id": "store-figures",
+      "name": "Store Figures",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1450, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Content processed with enhanced features\",\n  \"stats\": {\n    \"text_chunks\": {{ $('Enhanced Content Parser').item.json.metadata.total_text_chunks }},\n    \"tables\": {{ $('Enhanced Content Parser').item.json.metadata.total_tables }},\n    \"figures\": {{ $('Enhanced Content Parser').item.json.metadata.total_figures }},\n    \"sections\": {{ $('Enhanced Content Parser').item.json.metadata.total_sections }}\n  },\n  \"collections_initialized\": {{ $('Initialize Collections').item.json.collections_status }}\n}"
+      },
+      "id": "webhook-response",
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Initialize Collections", "type": "main", "index": 0 }]]
+    },
+    "Initialize Collections": {
+      "main": [[{ "node": "Enhanced Content Parser", "type": "main", "index": 0 }]]
+    },
+    "Enhanced Content Parser": {
+      "main": [[
+        { "node": "Prepare Text", "type": "main", "index": 0 },
+        { "node": "Prepare Tables", "type": "main", "index": 0 },
+        { "node": "Prepare Figures", "type": "main", "index": 0 }
+      ]]
+    },
+    "Prepare Text": {
+      "main": [[{ "node": "Split Text", "type": "main", "index": 0 }]]
+    },
+    "Prepare Tables": {
+      "main": [[{ "node": "Split Tables", "type": "main", "index": 0 }]]
+    },
+    "Prepare Figures": {
+      "main": [[{ "node": "Split Figures", "type": "main", "index": 0 }]]
+    },
+    "Split Text": {
+      "main": [[{ "node": "Embed Text", "type": "main", "index": 0 }]]
+    },
+    "Split Tables": {
+      "main": [[{ "node": "Embed Tables", "type": "main", "index": 0 }]]
+    },
+    "Split Figures": {
+      "main": [[{ "node": "Embed Figures", "type": "main", "index": 0 }]]
+    },
+    "Embed Text": {
+      "main": [[{ "node": "Store Text", "type": "main", "index": 0 }]]
+    },
+    "Embed Tables": {
+      "main": [[{ "node": "Store Tables", "type": "main", "index": 0 }]]
+    },
+    "Embed Figures": {
+      "main": [[{ "node": "Store Figures", "type": "main", "index": 0 }]]
+    },
+    "Store Text": {
+      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
+    },
+    "Store Tables": {
+      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
+    },
+    "Store Figures": {
+      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": ["mistral", "qdrant", "enhanced", "hybrid-search"],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-07T12:00:00.000Z",
+  "versionId": "2"
+}
