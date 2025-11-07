@@ -225,54 +225,54 @@
     }
   ],
   "connections": {
-    "Webhook Trigger": {
-      "main": [[{ "node": "Initialize Collections", "type": "main", "index": 0 }]]
+    "webhook-trigger": {
+      "main": [[{ "node": "init-collections", "type": "main", "index": 0 }]]
     },
-    "Initialize Collections": {
-      "main": [[{ "node": "Enhanced Content Parser", "type": "main", "index": 0 }]]
+    "init-collections": {
+      "main": [[{ "node": "content-parser", "type": "main", "index": 0 }]]
     },
-    "Enhanced Content Parser": {
+    "content-parser": {
       "main": [[
-        { "node": "Prepare Text", "type": "main", "index": 0 },
-        { "node": "Prepare Tables", "type": "main", "index": 0 },
-        { "node": "Prepare Figures", "type": "main", "index": 0 }
+        { "node": "prepare-text", "type": "main", "index": 0 },
+        { "node": "prepare-tables", "type": "main", "index": 0 },
+        { "node": "prepare-figures", "type": "main", "index": 0 }
       ]]
     },
-    "Prepare Text": {
-      "main": [[{ "node": "Split Text", "type": "main", "index": 0 }]]
+    "prepare-text": {
+      "main": [[{ "node": "split-text", "type": "main", "index": 0 }]]
     },
-    "Prepare Tables": {
-      "main": [[{ "node": "Split Tables", "type": "main", "index": 0 }]]
+    "prepare-tables": {
+      "main": [[{ "node": "split-tables", "type": "main", "index": 0 }]]
     },
-    "Prepare Figures": {
-      "main": [[{ "node": "Split Figures", "type": "main", "index": 0 }]]
+    "prepare-figures": {
+      "main": [[{ "node": "split-figures", "type": "main", "index": 0 }]]
     },
-    "Split Text": {
-      "main": [[{ "node": "Embed Text", "type": "main", "index": 0 }]]
+    "split-text": {
+      "main": [[{ "node": "embed-text", "type": "main", "index": 0 }]]
     },
-    "Split Tables": {
-      "main": [[{ "node": "Embed Tables", "type": "main", "index": 0 }]]
+    "split-tables": {
+      "main": [[{ "node": "embed-tables", "type": "main", "index": 0 }]]
     },
-    "Split Figures": {
-      "main": [[{ "node": "Embed Figures", "type": "main", "index": 0 }]]
+    "split-figures": {
+      "main": [[{ "node": "embed-figures", "type": "main", "index": 0 }]]
     },
-    "Embed Text": {
-      "main": [[{ "node": "Store Text", "type": "main", "index": 0 }]]
+    "embed-text": {
+      "main": [[{ "node": "store-text", "type": "main", "index": 0 }]]
     },
-    "Embed Tables": {
-      "main": [[{ "node": "Store Tables", "type": "main", "index": 0 }]]
+    "embed-tables": {
+      "main": [[{ "node": "store-tables", "type": "main", "index": 0 }]]
     },
-    "Embed Figures": {
-      "main": [[{ "node": "Store Figures", "type": "main", "index": 0 }]]
+    "embed-figures": {
+      "main": [[{ "node": "store-figures", "type": "main", "index": 0 }]]
     },
-    "Store Text": {
-      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
+    "store-text": {
+      "main": [[{ "node": "webhook-response", "type": "main", "index": 0 }]]
     },
-    "Store Tables": {
-      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
+    "store-tables": {
+      "main": [[{ "node": "webhook-response", "type": "main", "index": 0 }]]
     },
-    "Store Figures": {
-      "main": [[{ "node": "Response", "type": "main", "index": 0 }]]
+    "store-figures": {
+      "main": [[{ "node": "webhook-response", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
