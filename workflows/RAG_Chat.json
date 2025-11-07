@@ -3,28 +3,26 @@
   "nodes": [
     {
       "parameters": {
-        "mode": "insert",
-        "tableName": {
+        "operation": "insert",
+        "collection": {
           "__rl": true,
           "value": "documentsinsurance_gig",
-          "mode": "list",
-          "cachedResultName": "documentsinsurance_gig"
+          "mode": "name"
         },
-        "embeddingBatchSize": 50,
         "options": {}
       },
-      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
-      "typeVersion": 1.3,
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1,
       "position": [
         1664,
         -176
       ],
       "id": "b1c52c0a-4d2e-4114-ae76-5718adbda2a7",
-      "name": "Supabase Vector Store",
+      "name": "Qdrant Vector Store",
       "credentials": {
-        "supabaseApi": {
-          "id": "bQMqD3zM78NA1YFW",
-          "name": "Supabase account"
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
         }
       }
     },
@@ -59,7 +57,7 @@
     {
       "parameters": {
         "options": {
-          "systemMessage": "You are a helpful assistant.\n\nYou MUST use the Hybrid_search_tool tool to find the answer. Do not use your own knowledge.\n\nIf you are not sure what to say, then simply output \"Sorry, I don't know\"\n\nIf you received this error \"OpenAI: Rate limit reached\" or \"Error: Unknown error\" reply that tray again after 1 minute, as this is a limited demo request reached"
+          "systemMessage": "You are a helpful assistant.\n\nYou MUST use the Qdrant_search_tool to find the answer. Do not use your own knowledge.\n\nIf you are not sure what to say, then simply output \"Sorry, I don't know\"\n\nIf you received this error \"OpenAI: Rate limit reached\" or \"Error: Unknown error\" reply that try again after 1 minute, as this is a limited demo request reached"
         }
       },
       "type": "@n8n/n8n-nodes-langchain.agent",
@@ -163,29 +161,18 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://ohbglkhpupqvctupgmjw.supabase.co/functions/v1/hybrid_search_gig",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Authorization",
-              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oYmdsa2hwdXBxdmN0dXBnbWp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc4NDg1MzIsImV4cCI6MjA3MzQyNDUzMn0.WUYqkBTBNZuquDrKEgrJRrbiLZQl0KMP8d_aK9rcQq0"
-            }
-          ]
-        },
+        "url": "={{ $env.N8N_HOST || 'http://localhost:5678' }}/webhook/qdrant-search",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "query",
-              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', ``, 'string') }}"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"{{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', ``, 'string') }}\"\n}",
         "options": {
-          "redirect": {
-            "redirect": {}
-          }
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
         }
       },
       "type": "n8n-nodes-base.httpRequestTool",
@@ -195,7 +182,7 @@
         496
       ],
       "id": "4ba8cbda-f49c-4188-8233-b8aef5b8e60f",
-      "name": "Hybrid_search_tool"
+      "name": "Qdrant_search_tool"
     },
     {
       "parameters": {
@@ -242,7 +229,15 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -257,7 +252,8 @@
           "id": "Y2mJOld0lCiU00MJ",
           "name": "Mistral Cloud account"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -282,7 +278,15 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -291,13 +295,14 @@
         -176
       ],
       "id": "8b79b834-6569-4254-a1b4-4caab9375da6",
-      "name": "HTTP Request",
+      "name": "Get File URL",
       "credentials": {
         "mistralCloudApi": {
           "id": "Y2mJOld0lCiU00MJ",
           "name": "Mistral Cloud account"
         }
-      }
+      },
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -307,8 +312,15 @@
         "nodeCredentialType": "mistralCloudApi",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"mistral-ocr-latest\",\n  \"document\": {\n    \"type\": \"document_url\",\n    \"document_url\": \"{{ $json.url }}\"\n  },\n  \"include_image_base64\": true\n} ",
+        "jsonBody": "={\n  \"model\": \"mistral-ocr-latest\",\n  \"document\": {\n    \"type\": \"document_url\",\n    \"document_url\": \"{{ $json.url }}\"\n  },\n  \"include_image_base64\": true\n}",
         "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 60000,
           "response": {
             "response": {
               "responseFormat": "text",
@@ -324,13 +336,14 @@
         -176
       ],
       "id": "a2796e39-70ea-4343-b26c-4b238d86a17c",
-      "name": "HTTP Request1",
+      "name": "OCR Extract Text",
       "credentials": {
         "mistralCloudApi": {
           "id": "Y2mJOld0lCiU00MJ",
           "name": "Mistral Cloud account"
         }
-      }
+      },
+      "continueOnFail": true
     }
   ],
   "pinData": {},
@@ -339,7 +352,7 @@
       "ai_document": [
         [
           {
-            "node": "Supabase Vector Store",
+            "node": "Qdrant Vector Store",
             "type": "ai_document",
             "index": 0
           }
@@ -394,14 +407,14 @@
       "ai_embedding": [
         [
           {
-            "node": "Supabase Vector Store",
+            "node": "Qdrant Vector Store",
             "type": "ai_embedding",
             "index": 0
           }
         ]
       ]
     },
-    "Hybrid_search_tool": {
+    "Qdrant_search_tool": {
       "ai_tool": [
         [
           {
@@ -449,7 +462,7 @@
       "main": [
         [
           {
-            "node": "Supabase Vector Store",
+            "node": "Qdrant Vector Store",
             "type": "main",
             "index": 0
           }

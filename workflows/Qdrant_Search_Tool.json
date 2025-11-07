@@ -1,0 +1,466 @@
+{
+  "name": "Qdrant Search Tool for RAG",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "qdrant-search",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook - Search Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "qdrant-search-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-env-qdrant",
+              "leftValue": "={{ $env.QDRANT_URL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "check-query",
+              "leftValue": "={{ $json.query || $json.body?.query }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-inputs",
+      "name": "Validate Inputs",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "validation_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ !$env.QDRANT_URL ? 'Missing QDRANT_URL environment variable' : 'Missing query parameter' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-validation-error",
+      "name": "Prepare Validation Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [650, 450]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "url": "https://api.openai.com/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-ada-002\",\n  \"input\": \"{{ $json.query || $json.body?.query }}\"\n}",
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "generate-query-embedding",
+      "name": "Generate Query Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [650, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "ybKWjgaznJsUQAHd",
+          "name": "OpenAi account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "embedding_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to generate query embedding' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-embedding-error",
+      "name": "Prepare Embedding Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [850, 450]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "qdrantApi",
+        "url": "={{ $env.QDRANT_URL }}/collections/documentsinsurance_gig/points/search",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ $json.data[0].embedding }},\n  \"limit\": 5,\n  \"with_payload\": true,\n  \"with_vector\": false,\n  \"score_threshold\": 0.7\n}",
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "search-qdrant",
+      "name": "Search Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [850, 300],
+      "credentials": {
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "search_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to search Qdrant' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-search-error",
+      "name": "Prepare Search Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1050, 450]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Format search results for AI agent\nconst searchResults = $input.item.json.result || [];\n\n// Extract and format the relevant content\nconst formattedResults = searchResults.map((result, index) => {\n  const payload = result.payload || {};\n  const score = result.score || 0;\n  \n  return {\n    rank: index + 1,\n    content: payload.content || payload.text || '',\n    score: score.toFixed(3),\n    metadata: payload.metadata || {}\n  };\n});\n\n// Create a readable text response\nconst textResponse = formattedResults.map(r => \n  `[${r.rank}] (Score: ${r.score})\\n${r.content}`\n).join('\\n\\n---\\n\\n');\n\nreturn {\n  query: $('Validate Inputs').first().json.query || $('Validate Inputs').first().json.body?.query,\n  total_results: formattedResults.length,\n  results: formattedResults,\n  text_response: textResponse || 'No relevant results found.',\n  timestamp: new Date().toISOString()\n};"
+      },
+      "id": "format-results",
+      "name": "Format Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "formatting_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to format search results' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-format-error",
+      "name": "Prepare Format Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1250, 450]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Error logger\nconst errorData = $input.item.json;\n\nconst logEntry = {\n  level: 'ERROR',\n  timestamp: errorData.timestamp || new Date().toISOString(),\n  error_type: errorData.error_type || 'unknown_error',\n  error_message: errorData.error_message || 'An error occurred',\n  workflow: 'Qdrant Search Tool',\n  execution_id: $execution.id\n};\n\nconsole.error('[ERROR LOG]', JSON.stringify(logEntry, null, 2));\n\nreturn logEntry;"
+      },
+      "id": "error-logger",
+      "name": "Error Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 450]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": {\n    \"type\": \"{{ $json.error_type }}\",\n    \"message\": \"{{ $json.error_message }}\",\n    \"timestamp\": \"{{ $json.timestamp }}\"\n  }\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1650, 450]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Success logger\nconst resultData = $input.item.json;\n\nconst logEntry = {\n  level: 'INFO',\n  timestamp: new Date().toISOString(),\n  message: 'Search completed successfully',\n  details: {\n    query: resultData.query,\n    total_results: resultData.total_results\n  },\n  workflow: 'Qdrant Search Tool',\n  execution_id: $execution.id\n};\n\nconsole.log('[INFO LOG]', JSON.stringify(logEntry, null, 2));\n\nreturn resultData;"
+      },
+      "id": "success-logger",
+      "name": "Success Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"query\": \"{{ $json.query }}\",\n  \"total_results\": {{ $json.total_results }},\n  \"results\": {{ $json.results }},\n  \"text_response\": \"{{ $json.text_response }}\",\n  \"timestamp\": \"{{ $json.timestamp }}\"\n}",
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1450, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Search Request": {
+      "main": [
+        [
+          {
+            "node": "Validate Inputs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Inputs": {
+      "main": [
+        [
+          {
+            "node": "Generate Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Search Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Embedding Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Embedding Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Format Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Search Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Search Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Search Results": {
+      "main": [
+        [
+          {
+            "node": "Success Logger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Format Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Logger": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Logger": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-07T00:00:00.000Z",
+  "versionId": "1"
+}
