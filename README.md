@@ -1,15 +1,33 @@
-# Mistral Output Separation with n8n and Qdrant
+# Mistral AI & Qdrant n8n Workflows
 
-This project provides a complete workflow for processing Mistral AI output, separating content into text, tables, and figures, and storing each type separately in Qdrant vector database.
+This project provides n8n workflows for AI-powered document processing and vector storage:
 
-## Overview
+1. **Mistral Output Separation**: Process Mistral AI output, separating content into text, tables, and figures
+2. **Document Ingestion with Duplicate Detection**: Upload and vectorize documents with intelligent duplicate handling
 
-The workflow processes Mistral AI responses that may contain:
+## Workflows
+
+### 1. Mistral Output Separation (`workflows/mistral-qdrant-separation.json`)
+
+Processes Mistral AI responses that may contain:
 - **Text**: Regular paragraphs and content
 - **Tables**: Structured data in markdown or HTML tables
 - **Figures**: Images, charts, diagrams (as URLs or base64)
 
 Each content type is stored in separate Qdrant collections for optimized retrieval and semantic search.
+
+[Documentation](README.md#workflow-steps) | [Error Handling](README.md#error-handling-and-logging)
+
+### 2. Document Ingestion with Duplicate Detection (`workflows/ingest-vectorize-docs.json`)
+
+Intelligent document ingestion system that:
+- **Detects Duplicates**: Uses file hash to identify existing documents
+- **Prevents Hallucinations**: Automatically updates instead of duplicating
+- **Smart Updates**: Only processes documents when content changes
+- **Auto-Cleanup**: Deletes old versions before storing updates
+- **Chunks Documents**: Splits large documents for optimal embedding
+
+[Full Documentation](docs/INGEST_WORKFLOW.md)
 
 ## Architecture
 

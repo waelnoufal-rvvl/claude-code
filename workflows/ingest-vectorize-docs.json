@@ -1,0 +1,995 @@
+{
+  "name": "Ingest & Vectorize Documents with Duplicate Detection",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ingest-document",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Document Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 400],
+      "webhookId": "document-ingest-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-env-qdrant",
+              "leftValue": "={{ $env.QDRANT_URL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "check-document",
+              "leftValue": "={{ $json.document_content || $json.body?.document_content }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "check-filename",
+              "leftValue": "={{ $json.filename || $json.body?.filename }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-inputs",
+      "name": "Validate Input & Env",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [450, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "validation_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ !$env.QDRANT_URL ? 'Missing QDRANT_URL environment variable' : (!($json.document_content || $json.body?.document_content) ? 'Missing document_content in request' : 'Missing filename in request') }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-validation-error",
+      "name": "Prepare Validation Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [650, 600]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Generate document hash for duplicate detection\nconst crypto = require('crypto');\n\nconst documentContent = $input.item.json.document_content || $input.item.json.body?.document_content || '';\nconst filename = $input.item.json.filename || $input.item.json.body?.filename || 'unknown';\nconst collection = $input.item.json.collection || $input.item.json.body?.collection || 'documents';\n\n// Generate SHA-256 hash of filename for consistent ID\nconst fileHash = crypto.createHash('sha256').update(filename).digest('hex');\n\n// Generate content hash for change detection\nconst contentHash = crypto.createHash('sha256').update(documentContent).digest('hex');\n\nreturn {\n  filename: filename,\n  document_content: documentContent,\n  collection: collection,\n  file_hash: fileHash,\n  content_hash: contentHash,\n  metadata: {\n    original_filename: filename,\n    upload_timestamp: new Date().toISOString(),\n    file_size: documentContent.length\n  }\n};"
+      },
+      "id": "generate-document-hash",
+      "name": "Generate Document Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "hash_generation_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to generate document hash' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-hash-error",
+      "name": "Prepare Hash Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [850, 600]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "qdrantApi",
+        "url": "={{ $env.QDRANT_URL }}/collections/{{ $json.collection }}/points/scroll",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"file_hash\",\n        \"match\": {\n          \"value\": \"{{ $json.file_hash }}\"\n        }\n      }\n    ]\n  },\n  \"limit\": 100,\n  \"with_payload\": true,\n  \"with_vector\": false\n}",
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "check-existing-document",
+      "name": "Check Existing Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [850, 400],
+      "credentials": {
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "duplicate_check_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to check for existing document' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-check-error",
+      "name": "Prepare Check Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1050, 600]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Analyze duplicate check results\nconst checkResult = $input.item.json;\nconst existingPoints = checkResult.result?.points || [];\nconst documentHash = $('Generate Document Hash').item.json;\n\nif (existingPoints.length > 0) {\n  // Document exists - check if content changed\n  const existingContentHash = existingPoints[0].payload?.content_hash;\n  const newContentHash = documentHash.content_hash;\n  \n  const pointIds = existingPoints.map(p => p.id);\n  \n  return {\n    ...documentHash,\n    duplicate_found: true,\n    content_changed: existingContentHash !== newContentHash,\n    existing_points: pointIds,\n    existing_count: existingPoints.length,\n    action: existingContentHash !== newContentHash ? 'update' : 'skip'\n  };\n} else {\n  // New document\n  return {\n    ...documentHash,\n    duplicate_found: false,\n    content_changed: true,\n    existing_points: [],\n    existing_count: 0,\n    action: 'insert'\n  };\n}"
+      },
+      "id": "analyze-duplicate",
+      "name": "Analyze Duplicate Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "analysis_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to analyze duplicate status' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-analysis-error",
+      "name": "Prepare Analysis Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1250, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-action",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "skip",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-if-process",
+      "name": "Should Process Document?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "skip-reason",
+              "name": "skip_reason",
+              "value": "Document already exists with same content",
+              "type": "string"
+            },
+            {
+              "id": "filename",
+              "name": "filename",
+              "value": "={{ $json.filename }}",
+              "type": "string"
+            },
+            {
+              "id": "file-hash",
+              "name": "file_hash",
+              "value": "={{ $json.file_hash }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-skip-response",
+      "name": "Prepare Skip Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1450, 550]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-existing",
+              "leftValue": "={{ $json.duplicate_found }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "check-if-delete",
+      "name": "Need to Delete Old?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "qdrantApi",
+        "url": "={{ $env.QDRANT_URL }}/collections/{{ $json.collection }}/points/delete",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": {{ $json.existing_points }}\n}",
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "delete-old-document",
+      "name": "Delete Old Document Versions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1650, 300],
+      "credentials": {
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "delete_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to delete old document versions' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-delete-error",
+      "name": "Prepare Delete Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1850, 600]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Chunk document into smaller pieces for embedding\nconst analysisData = $('Analyze Duplicate Status').item.json;\nconst documentContent = analysisData.document_content;\nconst filename = analysisData.filename;\nconst collection = analysisData.collection;\nconst fileHash = analysisData.file_hash;\nconst contentHash = analysisData.content_hash;\n\n// Simple chunking strategy: split by paragraphs with max size\nconst MAX_CHUNK_SIZE = 1000; // characters\nconst paragraphs = documentContent.split(/\\n\\n+/);\nconst chunks = [];\n\nlet currentChunk = '';\nlet chunkIndex = 0;\n\nfor (const paragraph of paragraphs) {\n  const trimmed = paragraph.trim();\n  if (!trimmed) continue;\n  \n  if (currentChunk.length + trimmed.length > MAX_CHUNK_SIZE && currentChunk.length > 0) {\n    // Save current chunk and start new one\n    chunks.push({\n      content: currentChunk.trim(),\n      chunk_index: chunkIndex,\n      total_chunks: 0 // Will update after\n    });\n    chunkIndex++;\n    currentChunk = trimmed;\n  } else {\n    currentChunk += (currentChunk ? '\\n\\n' : '') + trimmed;\n  }\n}\n\n// Add last chunk\nif (currentChunk.trim()) {\n  chunks.push({\n    content: currentChunk.trim(),\n    chunk_index: chunkIndex,\n    total_chunks: 0\n  });\n}\n\n// Update total_chunks\nconst totalChunks = chunks.length;\nchunks.forEach(chunk => {\n  chunk.total_chunks = totalChunks;\n  chunk.filename = filename;\n  chunk.collection = collection;\n  chunk.file_hash = fileHash;\n  chunk.content_hash = contentHash;\n  chunk.metadata = analysisData.metadata;\n});\n\nreturn {\n  chunks: chunks,\n  metadata: {\n    ...analysisData.metadata,\n    total_chunks: totalChunks,\n    file_hash: fileHash,\n    content_hash: contentHash\n  }\n};"
+      },
+      "id": "chunk-document",
+      "name": "Chunk Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "chunking_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to chunk document' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-chunk-error",
+      "name": "Prepare Chunk Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2050, 600]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "chunks",
+        "options": {}
+      },
+      "id": "split-chunks",
+      "name": "Split Chunks",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [2050, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralApi",
+        "url": "=https://api.mistral.ai/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-embed\",\n  \"input\": [\"{{ $json.content }}\"]\n}",
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "generate-embedding",
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2250, 400],
+      "credentials": {
+        "mistralApi": {
+          "id": "1",
+          "name": "Mistral AI API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "embedding_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to generate embedding' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-embedding-error",
+      "name": "Prepare Embedding Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2450, 600]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "qdrantApi",
+        "url": "={{ $env.QDRANT_URL }}/collections/{{ $('Split Chunks').item.json.collection }}/points",
+        "method": "PUT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $('Split Chunks').item.json.file_hash }}_{{ $('Split Chunks').item.json.chunk_index }}\",\n      \"vector\": {{ $json.data[0].embedding }},\n      \"payload\": {\n        \"content\": \"{{ $('Split Chunks').item.json.content }}\",\n        \"filename\": \"{{ $('Split Chunks').item.json.filename }}\",\n        \"file_hash\": \"{{ $('Split Chunks').item.json.file_hash }}\",\n        \"content_hash\": \"{{ $('Split Chunks').item.json.content_hash }}\",\n        \"chunk_index\": {{ $('Split Chunks').item.json.chunk_index }},\n        \"total_chunks\": {{ $('Split Chunks').item.json.total_chunks }},\n        \"timestamp\": \"{{ $now }}\",\n        \"metadata\": {{ $('Split Chunks').item.json.metadata }}\n      }\n    }\n  ]\n}",
+        "options": {
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryInterval": 1000
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "store-in-qdrant",
+      "name": "Store in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2450, 400],
+      "credentials": {
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-type",
+              "name": "error_type",
+              "value": "storage_error",
+              "type": "string"
+            },
+            {
+              "id": "error-message",
+              "name": "error_message",
+              "value": "={{ $json.error || 'Failed to store in Qdrant' }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-storage-error",
+      "name": "Prepare Storage Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [2650, 600]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Centralized error logger\nconst errorData = $input.item.json;\n\nconst logEntry = {\n  level: 'ERROR',\n  timestamp: errorData.timestamp || new Date().toISOString(),\n  error_type: errorData.error_type || 'unknown_error',\n  error_message: errorData.error_message || 'An error occurred',\n  workflow: 'Ingest & Vectorize Documents',\n  execution_id: $execution.id\n};\n\n// Log to console (visible in n8n logs)\nconsole.error('[ERROR LOG]', JSON.stringify(logEntry, null, 2));\n\n// Return formatted log entry\nreturn logEntry;"
+      },
+      "id": "error-logger",
+      "name": "Error Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2850, 600]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": {\n    \"type\": \"{{ $json.error_type }}\",\n    \"message\": \"{{ $json.error_message }}\",\n    \"timestamp\": \"{{ $json.timestamp }}\"\n  }\n}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3050, 600]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log successful document ingestion\nconst chunkData = $('Chunk Document').item.json;\n\nconst successData = {\n  level: 'INFO',\n  timestamp: new Date().toISOString(),\n  message: 'Document successfully ingested and vectorized',\n  details: {\n    filename: chunkData.metadata.original_filename,\n    action: $('Analyze Duplicate Status').item.json.action,\n    chunks_processed: chunkData.metadata.total_chunks,\n    file_hash: chunkData.metadata.file_hash,\n    collection: $('Analyze Duplicate Status').item.json.collection\n  },\n  workflow: 'Ingest & Vectorize Documents',\n  execution_id: $execution.id\n};\n\n// Log to console\nconsole.log('[INFO LOG]', JSON.stringify(successData, null, 2));\n\nreturn successData;"
+      },
+      "id": "success-logger",
+      "name": "Success Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2650, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Document successfully processed\",\n  \"action\": \"{{ $json.details.action }}\",\n  \"details\": {\n    \"filename\": \"{{ $json.details.filename }}\",\n    \"chunks_created\": {{ $json.details.chunks_processed }},\n    \"file_hash\": \"{{ $json.details.file_hash }}\",\n    \"collection\": \"{{ $json.details.collection }}\",\n    \"timestamp\": \"{{ $json.timestamp }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2850, 400]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log skipped document\nconst skipData = $input.item.json;\n\nconst logEntry = {\n  level: 'INFO',\n  timestamp: new Date().toISOString(),\n  message: 'Document skipped (unchanged)',\n  details: {\n    filename: skipData.filename,\n    file_hash: skipData.file_hash,\n    reason: skipData.skip_reason\n  },\n  workflow: 'Ingest & Vectorize Documents',\n  execution_id: $execution.id\n};\n\nconsole.log('[INFO LOG]', JSON.stringify(logEntry, null, 2));\n\nreturn logEntry;"
+      },
+      "id": "skip-logger",
+      "name": "Skip Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 550]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Document skipped\",\n  \"action\": \"skip\",\n  \"details\": {\n    \"filename\": \"{{ $json.details.filename }}\",\n    \"reason\": \"{{ $json.details.reason }}\",\n    \"file_hash\": \"{{ $json.details.file_hash }}\",\n    \"timestamp\": \"{{ $json.timestamp }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "skip-response",
+      "name": "Skip Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1850, 550]
+    }
+  ],
+  "connections": {
+    "Document Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input & Env",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input & Env": {
+      "main": [
+        [
+          {
+            "node": "Generate Document Hash",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Validation Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Document Hash": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Document",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Hash Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Hash Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Document": {
+      "main": [
+        [
+          {
+            "node": "Analyze Duplicate Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Check Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Check Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Duplicate Status": {
+      "main": [
+        [
+          {
+            "node": "Should Process Document?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Analysis Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Analysis Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Process Document?": {
+      "main": [
+        [
+          {
+            "node": "Need to Delete Old?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Skip Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Skip Response": {
+      "main": [
+        [
+          {
+            "node": "Skip Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need to Delete Old?": {
+      "main": [
+        [
+          {
+            "node": "Delete Old Document Versions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Chunk Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Old Document Versions": {
+      "main": [
+        [
+          {
+            "node": "Chunk Document",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Delete Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Delete Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk Document": {
+      "main": [
+        [
+          {
+            "node": "Split Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Chunk Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Chunk Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Chunks": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Store in Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Embedding Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Embedding Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store in Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Success Logger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Storage Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Storage Error": {
+      "main": [
+        [
+          {
+            "node": "Error Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Logger": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Logger": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Logger": {
+      "main": [
+        [
+          {
+            "node": "Skip Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-07T00:00:00.000Z",
+  "versionId": "1"
+}
