@@ -1,0 +1,465 @@
+{
+  "name": "Mistral Output → Qdrant Separation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mistral-process",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "mistral-qdrant-webhook"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract Mistral response from input\nconst mistralResponse = $input.item.json.mistral_response || $input.item.json.body?.mistral_response || '';\n\n// Initialize arrays for different content types\nconst textChunks = [];\nconst tables = [];\nconst figures = [];\n\n// Regex patterns for content detection\nconst tableRegex = /\\|(.+)\\|[\\r\\n]+\\|[-:\\s|]+\\|[\\r\\n]+((?:\\|.+\\|[\\r\\n]+)+)/g;\nconst htmlTableRegex = /<table[\\s\\S]*?<\\/table>/gi;\nconst imageRegex = /!\\[([^\\]]*)\\]\\(([^)]+)\\)/g;\nconst htmlImageRegex = /<img[^>]+src=[\"']([^\"']+)[\"'][^>]*>/gi;\n\n// Extract tables (markdown format)\nlet tableMatch;\nwhile ((tableMatch = tableRegex.exec(mistralResponse)) !== null) {\n  tables.push({\n    content: tableMatch[0],\n    type: 'markdown',\n    index: tableMatch.index\n  });\n}\n\n// Extract tables (HTML format)\nlet htmlTableMatch;\nwhile ((htmlTableMatch = htmlTableRegex.exec(mistralResponse)) !== null) {\n  tables.push({\n    content: htmlTableMatch[0],\n    type: 'html',\n    index: htmlTableMatch.index\n  });\n}\n\n// Extract figures (markdown images)\nlet imageMatch;\nwhile ((imageMatch = imageRegex.exec(mistralResponse)) !== null) {\n  figures.push({\n    alt_text: imageMatch[1],\n    url: imageMatch[2],\n    type: 'markdown',\n    index: imageMatch.index\n  });\n}\n\n// Extract figures (HTML images)\nlet htmlImageMatch;\nwhile ((htmlImageMatch = htmlImageRegex.exec(mistralResponse)) !== null) {\n  figures.push({\n    url: htmlImageMatch[1],\n    type: 'html',\n    index: htmlImageMatch.index\n  });\n}\n\n// Remove tables and figures from response to get text only\nlet textOnly = mistralResponse;\n\n// Sort removals by index (descending) to avoid offset issues\nconst removals = [\n  ...tables.map(t => ({ index: t.index, length: t.content.length })),\n  ...figures.map(f => {\n    if (f.type === 'markdown') {\n      return { index: f.index, length: `![${f.alt_text}](${f.url})`.length };\n    } else {\n      const match = mistralResponse.substring(f.index).match(/<img[^>]+>/);\n      return { index: f.index, length: match ? match[0].length : 0 };\n    }\n  })\n].sort((a, b) => b.index - a.index);\n\nfor (const removal of removals) {\n  textOnly = textOnly.substring(0, removal.index) + textOnly.substring(removal.index + removal.length);\n}\n\n// Split text into paragraphs/chunks\nconst paragraphs = textOnly\n  .split(/\\n\\n+/)\n  .map(p => p.trim())\n  .filter(p => p.length > 0);\n\nparagraphs.forEach((paragraph, idx) => {\n  textChunks.push({\n    content: paragraph,\n    chunk_index: idx,\n    type: 'text'\n  });\n});\n\n// Return separated content\nreturn {\n  text: textChunks,\n  tables: tables.map((t, idx) => ({ ...t, table_index: idx })),\n  figures: figures.map((f, idx) => ({ ...f, figure_index: idx })),\n  metadata: {\n    total_text_chunks: textChunks.length,\n    total_tables: tables.length,\n    total_figures: figures.length,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "content-parser",
+      "name": "Content Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "text-items",
+              "name": "items",
+              "value": "={{ $json.text }}",
+              "type": "array"
+            },
+            {
+              "id": "content-type",
+              "name": "content_type",
+              "value": "text",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-text",
+      "name": "Prepare Text Items",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "table-items",
+              "name": "items",
+              "value": "={{ $json.tables }}",
+              "type": "array"
+            },
+            {
+              "id": "content-type",
+              "name": "content_type",
+              "value": "table",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-tables",
+      "name": "Prepare Table Items",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "figure-items",
+              "name": "items",
+              "value": "={{ $json.figures }}",
+              "type": "array"
+            },
+            {
+              "id": "content-type",
+              "name": "content_type",
+              "value": "figure",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-figures",
+      "name": "Prepare Figure Items",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [650, 400]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items",
+        "options": {}
+      },
+      "id": "split-text",
+      "name": "Split Text Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items",
+        "options": {}
+      },
+      "id": "split-tables",
+      "name": "Split Table Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items",
+        "options": {}
+      },
+      "id": "split-figures",
+      "name": "Split Figure Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralApi",
+        "url": "=https://api.mistral.ai/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-embed\",\n  \"input\": [\"{{ $json.content }}\"]\n}",
+        "options": {}
+      },
+      "id": "generate-text-embedding",
+      "name": "Generate Text Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 200],
+      "credentials": {
+        "mistralApi": {
+          "id": "1",
+          "name": "Mistral AI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralApi",
+        "url": "=https://api.mistral.ai/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-embed\",\n  \"input\": [\"{{ $json.content }}\"]\n}",
+        "options": {}
+      },
+      "id": "generate-table-embedding",
+      "name": "Generate Table Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 300],
+      "credentials": {
+        "mistralApi": {
+          "id": "1",
+          "name": "Mistral AI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mistralApi",
+        "url": "=https://api.mistral.ai/v1/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"mistral-embed\",\n  \"input\": [\"{{ $json.alt_text || $json.url }}\"]\n}",
+        "options": {}
+      },
+      "id": "generate-figure-embedding",
+      "name": "Generate Figure Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1050, 400],
+      "credentials": {
+        "mistralApi": {
+          "id": "1",
+          "name": "Mistral AI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "qdrantApi",
+        "url": "={{ $env.QDRANT_URL }}/collections/mistral_text/points",
+        "method": "PUT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $json.id || $runIndex }}\",\n      \"vector\": {{ $json.data[0].embedding }},\n      \"payload\": {\n        \"content\": \"{{ $('Split Text Items').item.json.content }}\",\n        \"type\": \"text\",\n        \"source\": \"mistral\",\n        \"timestamp\": \"{{ $now }}\",\n        \"metadata\": {\n          \"chunk_index\": {{ $('Split Text Items').item.json.chunk_index }}\n        }\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "store-text-qdrant",
+      "name": "Store Text in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 200],
+      "credentials": {
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "qdrantApi",
+        "url": "={{ $env.QDRANT_URL }}/collections/mistral_tables/points",
+        "method": "PUT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $json.id || $runIndex }}\",\n      \"vector\": {{ $json.data[0].embedding }},\n      \"payload\": {\n        \"content\": \"{{ $('Split Table Items').item.json.content }}\",\n        \"type\": \"table\",\n        \"source\": \"mistral\",\n        \"timestamp\": \"{{ $now }}\",\n        \"metadata\": {\n          \"table_index\": {{ $('Split Table Items').item.json.table_index }},\n          \"table_type\": \"{{ $('Split Table Items').item.json.type }}\"\n        }\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "store-tables-qdrant",
+      "name": "Store Tables in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 300],
+      "credentials": {
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "qdrantApi",
+        "url": "={{ $env.QDRANT_URL }}/collections/mistral_figures/points",
+        "method": "PUT",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"points\": [\n    {\n      \"id\": \"{{ $json.id || $runIndex }}\",\n      \"vector\": {{ $json.data[0].embedding }},\n      \"payload\": {\n        \"content\": \"{{ $('Split Figure Items').item.json.alt_text || 'Figure' }}\",\n        \"image_url\": \"{{ $('Split Figure Items').item.json.url }}\",\n        \"type\": \"figure\",\n        \"source\": \"mistral\",\n        \"timestamp\": \"{{ $now }}\",\n        \"metadata\": {\n          \"figure_index\": {{ $('Split Figure Items').item.json.figure_index }},\n          \"figure_type\": \"{{ $('Split Figure Items').item.json.type }}\"\n        }\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "store-figures-qdrant",
+      "name": "Store Figures in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1250, 400],
+      "credentials": {
+        "qdrantApi": {
+          "id": "2",
+          "name": "Qdrant API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Content processed and stored successfully\",\n  \"stats\": {\n    \"text_chunks\": {{ $('Content Parser').item.json.metadata.total_text_chunks }},\n    \"tables\": {{ $('Content Parser').item.json.metadata.total_tables }},\n    \"figures\": {{ $('Content Parser').item.json.metadata.total_figures }}\n  }\n}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1450, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Content Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content Parser": {
+      "main": [
+        [
+          {
+            "node": "Prepare Text Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Table Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Figure Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Text Items": {
+      "main": [
+        [
+          {
+            "node": "Split Text Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Table Items": {
+      "main": [
+        [
+          {
+            "node": "Split Table Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Figure Items": {
+      "main": [
+        [
+          {
+            "node": "Split Figure Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Text Items": {
+      "main": [
+        [
+          {
+            "node": "Generate Text Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Table Items": {
+      "main": [
+        [
+          {
+            "node": "Generate Table Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Figure Items": {
+      "main": [
+        [
+          {
+            "node": "Generate Figure Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Text Embedding": {
+      "main": [
+        [
+          {
+            "node": "Store Text in Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Table Embedding": {
+      "main": [
+        [
+          {
+            "node": "Store Tables in Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Figure Embedding": {
+      "main": [
+        [
+          {
+            "node": "Store Figures in Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Text in Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Tables in Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Figures in Qdrant": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-07T00:00:00.000Z",
+  "versionId": "1"
+}
