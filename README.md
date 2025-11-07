@@ -269,20 +269,138 @@ For large documents:
 2. Process each chunk through the workflow
 3. Maintain chunk relationships in metadata
 
+## Error Handling and Logging
+
+The workflow includes comprehensive error handling and logging capabilities:
+
+### Error Handling Features
+
+1. **Environment Variable Validation**
+   - Validates `QDRANT_URL` is set before processing
+   - Validates input data contains `mistral_response`
+   - Returns HTTP 500 with clear error message if validation fails
+
+2. **Content Parser Error Handling**
+   - Catches JavaScript execution errors in content parsing
+   - Logs parse errors with full context
+   - Provides detailed error response
+
+3. **API Call Error Handling**
+   - All Mistral API calls include:
+     - Automatic retry (3 attempts with 1-second intervals)
+     - 30-second timeout
+     - Graceful failure handling
+   - All Qdrant API calls include:
+     - Automatic retry (3 attempts with 1-second intervals)
+     - 30-second timeout
+     - Graceful failure handling
+
+### Logging System
+
+The workflow includes two types of loggers:
+
+1. **Error Logger** (`workflows/mistral-qdrant-separation.json:484-493`)
+   - Captures all error types (validation, parsing, API failures)
+   - Logs to n8n console with `[ERROR LOG]` prefix
+   - Includes execution ID for tracing
+   - Returns HTTP 500 response to webhook caller
+
+2. **Success Logger** (`workflows/mistral-qdrant-separation.json:508-517`)
+   - Logs successful operations
+   - Includes processing statistics
+   - Logs to n8n console with `[INFO LOG]` prefix
+   - Returns HTTP 200 response with stats
+
+### Error Response Format
+
+Error responses follow this structure:
+```json
+{
+  "success": false,
+  "error": {
+    "type": "validation_error|parser_error|api_error",
+    "message": "Detailed error message",
+    "timestamp": "2025-11-07T12:34:56.789Z"
+  }
+}
+```
+
+Success responses include:
+```json
+{
+  "success": true,
+  "message": "Content processed and stored successfully",
+  "stats": {
+    "text_chunks": 5,
+    "tables": 2,
+    "figures": 1
+  },
+  "timestamp": "2025-11-07T12:34:56.789Z"
+}
+```
+
+### Viewing Logs
+
+Logs can be viewed in multiple ways:
+
+1. **n8n Web Interface**
+   - Open the workflow execution
+   - Check the execution log for console output
+   - Look for `[ERROR LOG]` or `[INFO LOG]` prefixes
+
+2. **n8n Server Logs**
+   - Check your n8n server console/logs
+   - All errors and successes are logged there
+
+3. **External Logging** (Optional)
+   - Modify the Error Logger and Success Logger nodes
+   - Add HTTP Request nodes to send logs to external services
+   - Examples: Datadog, Splunk, CloudWatch, or custom logging endpoints
+
 ## Troubleshooting
+
+### Issue: Missing environment variable QDRANT_URL
+- **Error**: `validation_error: Missing QDRANT_URL environment variable`
+- **Solution**: Set the `QDRANT_URL` environment variable in n8n settings
+- Example: `QDRANT_URL=https://your-qdrant-instance.com:6333`
+
+### Issue: Missing input data
+- **Error**: `validation_error: Missing or empty mistral_response in request body`
+- **Solution**: Ensure your webhook POST request includes `mistral_response` field
+- Example payload:
+```json
+{
+  "mistral_response": "Your Mistral AI output text here..."
+}
+```
+
+### Issue: Mistral API authentication failed
+- **Error**: `api_error: API Request Failed` with status code 401/403
+- **Solution**:
+  - Verify your Mistral API credentials in n8n
+  - Check API key is valid and has proper permissions
+  - Ensure credentials are attached to all Mistral embedding nodes
+
+### Issue: Qdrant connection failed
+- **Error**: `api_error: API Request Failed` when storing data
+- **Solution**:
+  - Verify Qdrant URL is correct and accessible
+  - Check Qdrant API credentials
+  - Ensure collections exist (`mistral_text`, `mistral_tables`, `mistral_figures`)
+  - Check network connectivity between n8n and Qdrant
 
 ### Issue: Tables not detected
 - Check table format (must have proper markdown pipes or HTML tags)
-- Verify regex patterns in `content_parser.js`
+- Verify regex patterns in Content Parser node
 
 ### Issue: Vector dimensions mismatch
 - Ensure Qdrant collection size matches embedding model output
 - Mistral-embed produces 1024-dimensional vectors
 
-### Issue: Qdrant connection timeout
-- Check Qdrant URL and credentials
-- Verify network connectivity
-- Increase timeout in n8n HTTP Request nodes
+### Issue: API rate limiting
+- Mistral API calls include retry logic (3 attempts)
+- If rate limited, increase retry intervals in HTTP Request node options
+- Consider implementing exponential backoff
 
 ## API Reference
 
